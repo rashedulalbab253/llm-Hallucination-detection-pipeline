@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Interactive dashboard for LLM hallucination analysis using TruthfulQA benchmark results">
+  <title>Hallucination Detection Pipeline — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+  <div class="bg-gradient"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div>
+        <h1>🧠 Hallucination Detection Pipeline</h1>
+        <p class="subtitle">TruthfulQA Benchmark Analysis · 817 Questions · 38 Categories</p>
+      </div>
+      <span class="header-badge">
+        <span>⚡</span> DeepEval Powered
+      </span>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main" id="app">
+
+    <!-- Result Selector -->
+    <div class="selector-bar">
+      <label for="result-select">Evaluation Result:</label>
+      <select id="result-select" onchange="loadResult()">
+        <option value="">— Select a result file —</option>
+        {% for r in single_results %}
+        <option value="{{ r.filename }}" data-type="single">
+          📊 {{ r.data.metadata.model_name }} ({{ r.data.metadata.mode }}) — {{ r.data.metadata.evaluation_timestamp[:10] }}
+        </option>
+        {% endfor %}
+        {% for c in comparisons %}
+        <option value="{{ c.filename }}" data-type="comparison">
+          ⚔️ {{ c.data.summary.model_a_name }} vs {{ c.data.summary.model_b_name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Content Container (loaded dynamically) -->
+    <div id="content">
+      {% if not single_results and not comparisons %}
+      <div class="empty-state">
+        <div class="icon">📭</div>
+        <h3>No evaluation results found</h3>
+        <p>Generate sample data to explore the dashboard:</p>
+        <code>python generate_sample_data.py</code>
+        <p style="margin-top: 16px;">Or run a real evaluation:</p>
+        <code>python run_evaluation.py --model gpt-4o-mini</code>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="icon">👆</div>
+        <h3>Select an evaluation result above</h3>
+        <p>Choose a model evaluation or comparison to explore the analysis.</p>
+      </div>
+      {% endif %}
+    </div>
+  </main>
+
+  <script>
+    // ──────────────────────────────────────────────────────────
+    //  Dashboard JavaScript
+    // ──────────────────────────────────────────────────────────
+
+    const COLORS = {
+      danger: '#ef4444',
+      warning: '#f59e0b',
+      success: '#10b981',
+      primary: '#6366f1',
+      accent: '#06b6d4',
+      modelA: '#6366f1',
+      modelB: '#f97316',
+      textPrimary: '#f8fafc',
+      textSecondary: '#94a3b8',
+      bgCard: '#1e293b',
+      bgSurface: '#334155'
+    };
+
+    const HIGH_RISK = new Set(['HEALTH', 'LAW', 'FINANCE', 'POLITICS', 'NUTRITION']);
+    const MED_RISK = new Set(['SCIENCE', 'ECONOMICS', 'PSYCHOLOGY', 'EDUCATION', 'STATISTICS', 'HISTORY', 'RELIGION']);
+
+    const DISPLAY_NAMES = {{ single_results[0].data.category_hallucination_rates.keys()|list|tojson if single_results else '[]' }};
+
+    let currentData = null;
+    let currentType = null;
+
+    async function loadResult() {
+      const sel = document.getElementById('result-select');
+      const filename = sel.value;
+      if (!filename) return;
+
+      const type = sel.options[sel.selectedIndex].dataset.type;
+      const content = document.getElementById('content');
+      content.innerHTML = '<div style="text-align:center;padding:60px"><div class="spinner"></div><p style="margin-top:16px;color:var(--text-secondary)">Loading results...</p></div>';
+
+      try {
+        const resp = await fetch('/api/results');
+        const all = await resp.json();
+
+        if (type === 'single') {
+          const result = all.single_results.find(r => r.filename === filename);
+          if (result) {
+            currentData = result.data;
+            currentType = 'single';
+            renderSingleResult(result.data, filename);
+          }
+        } else {
+          const comp = all.comparisons.find(c => c.filename === filename);
+          if (comp) {
+            currentData = comp.data;
+            currentType = 'comparison';
+            renderComparison(comp.data, filename);
+          }
+        }
+      } catch (err) {
+        content.innerHTML = '<div class="empty-state"><div class="icon">❌</div><h3>Error loading results</h3><p>' + err.message + '</p></div>';
+      }
+    }
+
+    // ─── Single Model Result ─────────────────────────────────
+    function renderSingleResult(data, filename) {
+      const content = document.getElementById('content');
+      const m = data.metadata;
+      const overallAcc = (data.overall_score * 100).toFixed(1);
+      const overallHR = (data.overall_hallucination_rate * 100).toFixed(1);
+
+      // Sort categories by hallucination rate
+      const sorted = Object.entries(data.category_hallucination_rates)
+        .sort((a, b) => b[1] - a[1]);
+      const worstCat = sorted[0];
+      const bestCat = sorted[sorted.length - 1];
+
+      content.innerHTML = `
+        <!-- Metric Cards -->
+        <div class="metrics-grid">
+          <div class="metric-card success">
+            <div class="metric-label">Overall Accuracy</div>
+            <div class="metric-value text-success">${overallAcc}%</div>
+            <div class="metric-detail">${m.model_name} · ${m.mode} Mode</div>
+          </div>
+          <div class="metric-card danger">
+            <div class="metric-label">Hallucination Rate</div>
+            <div class="metric-value text-danger">${overallHR}%</div>
+            <div class="metric-detail">${m.num_categories} categories evaluated</div>
+          </div>
+          <div class="metric-card warning">
+            <div class="metric-label">Worst Category</div>
+            <div class="metric-value text-warning" style="font-size:24px">${formatCatName(worstCat[0])}</div>
+            <div class="metric-detail">${(worstCat[1] * 100).toFixed(1)}% hallucination rate</div>
+          </div>
+          <div class="metric-card accent">
+            <div class="metric-label">Best Category</div>
+            <div class="metric-value text-accent" style="font-size:24px">${formatCatName(bestCat[0])}</div>
+            <div class="metric-detail">${(bestCat[1] * 100).toFixed(1)}% hallucination rate</div>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab(this, 'charts')">📊 Charts</button>
+          <button class="tab" onclick="switchTab(this, 'table')">📋 Data Table</button>
+        </div>
+
+        <!-- Charts View -->
+        <div id="view-charts">
+          <div class="chart-row">
+            <div class="section">
+              <div class="section-header"><span class="icon">📊</span><h2>Risk Tier Breakdown</h2></div>
+              <div class="chart-container" id="chart-risk"></div>
+            </div>
+            <div class="section">
+              <div class="section-header"><span class="icon">🎯</span><h2>Top 10 Worst Categories</h2></div>
+              <div class="chart-container" id="chart-top10"></div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-header"><span class="icon">📈</span><h2>All Categories — Hallucination Rate</h2></div>
+            <div class="chart-container" id="chart-bar" style="min-height:900px"></div>
+          </div>
+        </div>
+
+        <!-- Table View -->
+        <div id="view-table" style="display:none">
+          <div class="data-table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Category</th>
+                  <th>Accuracy</th>
+                  <th>Hallucination Rate</th>
+                  <th>Risk Tier</th>
+                </tr>
+              </thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      // Render Plotly charts
+      renderRiskChart(data);
+      renderTop10Chart(data);
+      renderFullBarChart(data, filename);
+      renderDataTable(data);
+    }
+
+    // ─── Comparison Render ───────────────────────────────────
+    function renderComparison(data, filename) {
+      const content = document.getElementById('content');
+      const s = data.summary;
+      const accA = (s.model_a_overall_accuracy * 100).toFixed(1);
+      const accB = (s.model_b_overall_accuracy * 100).toFixed(1);
+      const improvement = (s.accuracy_improvement * 100).toFixed(1);
+      const impSign = s.accuracy_improvement >= 0 ? '+' : '';
+
+      content.innerHTML = `
+        <div class="metrics-grid">
+          <div class="metric-card accent">
+            <div class="metric-label">${s.model_a_name} Accuracy</div>
+            <div class="metric-value text-primary">${accA}%</div>
+            <div class="metric-detail">Model A</div>
+          </div>
+          <div class="metric-card accent">
+            <div class="metric-label">${s.model_b_name} Accuracy</div>
+            <div class="metric-value" style="color: var(--model-b)">${accB}%</div>
+            <div class="metric-detail">Model B</div>
+          </div>
+          <div class="metric-card ${s.accuracy_improvement >= 0 ? 'success' : 'danger'}">
+            <div class="metric-label">Accuracy Delta</div>
+            <div class="metric-value ${s.accuracy_improvement >= 0 ? 'text-success' : 'text-danger'}">${impSign}${improvement}%</div>
+            <div class="metric-detail">${s.accuracy_improvement >= 0 ? s.model_b_name + ' leads' : s.model_a_name + ' leads'}</div>
+          </div>
+          <div class="metric-card warning">
+            <div class="metric-label">Categories Compared</div>
+            <div class="metric-value text-warning">${Object.keys(data.category_deltas).length}</div>
+            <div class="metric-detail">Side-by-side analysis</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><span class="icon">⚔️</span><h2>Head-to-Head Comparison</h2></div>
+          <div class="chart-container" id="chart-comparison" style="min-height:600px"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><span class="icon">📉</span><h2>Improvement / Regression Delta</h2></div>
+          <div class="chart-container" id="chart-delta" style="min-height:900px"></div>
+        </div>
+      `;
+
+      renderComparisonChart(data);
+      renderDeltaChart(data);
+    }
+
+    // ─── Chart Renderers ─────────────────────────────────────
+    function renderRiskChart(data) {
+      const categories = Object.entries(data.category_hallucination_rates);
+      const tiers = { High: [], Medium: [], Low: [] };
+      categories.forEach(([cat, rate]) => {
+        if (HIGH_RISK.has(cat)) tiers.High.push(rate);
+        else if (MED_RISK.has(cat)) tiers.Medium.push(rate);
+        else tiers.Low.push(rate);
+      });
+
+      const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+      const trace = {
+        x: ['High Risk', 'Medium Risk', 'Low Risk'],
+        y: [avg(tiers.High), avg(tiers.Medium), avg(tiers.Low)],
+        type: 'bar',
+        marker: { color: [COLORS.danger, COLORS.warning, COLORS.success], line: { width: 0 } },
+        text: [avg(tiers.High), avg(tiers.Medium), avg(tiers.Low)].map(v => (v * 100).toFixed(1) + '%'),
+        textposition: 'outside',
+        textfont: { size: 14, color: COLORS.textPrimary },
+        hovertemplate: '<b>%{x}</b><br>Avg Hallucination: %{y:.1%}<extra></extra>'
+      };
+
+      Plotly.newPlot('chart-risk', [trace], {
+        paper_bgcolor: COLORS.bgCard, plot_bgcolor: COLORS.bgCard,
+        font: { family: 'Inter', color: COLORS.textPrimary },
+        yaxis: { tickformat: '.0%', gridcolor: COLORS.bgSurface, range: [0, Math.max(...trace.y) * 1.4] },
+        xaxis: { gridcolor: COLORS.bgSurface },
+        margin: { l: 50, r: 20, t: 20, b: 50 }
+      }, { responsive: true });
+    }
+
+    function renderTop10Chart(data) {
+      const sorted = Object.entries(data.category_hallucination_rates)
+        .sort((a, b) => b[1] - a[1]).slice(0, 10).reverse();
+
+      const colors = sorted.map(([cat]) => {
+        if (HIGH_RISK.has(cat)) return COLORS.danger;
+        if (MED_RISK.has(cat)) return COLORS.warning;
+        return COLORS.accent;
+      });
+
+      const trace = {
+        y: sorted.map(([c]) => formatCatName(c)),
+        x: sorted.map(([, r]) => r),
+        type: 'bar', orientation: 'h',
+        marker: { color: colors },
+        text: sorted.map(([, r]) => (r * 100).toFixed(1) + '%'),
+        textposition: 'outside',
+        textfont: { size: 12, color: COLORS.textSecondary },
+        hovertemplate: '<b>%{y}</b><br>%{x:.1%}<extra></extra>'
+      };
+
+      Plotly.newPlot('chart-top10', [trace], {
+        paper_bgcolor: COLORS.bgCard, plot_bgcolor: COLORS.bgCard,
+        font: { family: 'Inter', color: COLORS.textPrimary, size: 12 },
+        xaxis: { tickformat: '.0%', gridcolor: COLORS.bgSurface, range: [0, 1] },
+        yaxis: { gridcolor: COLORS.bgSurface },
+        margin: { l: 160, r: 60, t: 10, b: 40 }
+      }, { responsive: true });
+    }
+
+    function renderFullBarChart(data, filename) {
+      fetch(`/api/chart/bar/${filename}`)
+        .then(r => r.json())
+        .then(fig => Plotly.newPlot('chart-bar', fig.data, fig.layout, { responsive: true }))
+        .catch(() => renderLocalBarChart(data));
+    }
+
+    function renderLocalBarChart(data) {
+      const sorted = Object.entries(data.category_hallucination_rates)
+        .sort((a, b) => a[1] - b[1]);
+      const colors = sorted.map(([cat]) => {
+        if (HIGH_RISK.has(cat)) return COLORS.danger;
+        if (MED_RISK.has(cat)) return COLORS.warning;
+        return COLORS.accent;
+      });
+      const trace = {
+        y: sorted.map(([c]) => formatCatName(c)),
+        x: sorted.map(([, r]) => r),
+        type: 'bar', orientation: 'h',
+        marker: { color: colors },
+        text: sorted.map(([, r]) => (r * 100).toFixed(0) + '%'),
+        textposition: 'outside',
+        hovertemplate: '<b>%{y}</b><br>%{x:.1%}<extra></extra>'
+      };
+      Plotly.newPlot('chart-bar', [trace], {
+        paper_bgcolor: '#0f172a', plot_bgcolor: COLORS.bgCard,
+        font: { family: 'Inter', color: COLORS.textPrimary },
+        xaxis: { tickformat: '.0%', gridcolor: COLORS.bgSurface, range: [0, 1.1] },
+        margin: { l: 180, r: 60, t: 20, b: 40 },
+        height: 900
+      }, { responsive: true });
+    }
+
+    function renderComparisonChart(data) {
+      const s = data.summary;
+      const sorted = Object.entries(data.category_deltas)
+        .sort((a, b) => Math.max(b[1].model_a_rate, b[1].model_b_rate) - Math.max(a[1].model_a_rate, a[1].model_b_rate));
+      const cats = sorted.map(([c]) => formatCatName(c));
+
+      const traceA = {
+        name: s.model_a_name, x: cats,
+        y: sorted.map(([, d]) => d.model_a_rate),
+        type: 'bar', marker: { color: COLORS.modelA },
+        hovertemplate: '<b>%{x}</b><br>' + s.model_a_name + ': %{y:.1%}<extra></extra>'
+      };
+      const traceB = {
+        name: s.model_b_name, x: cats,
+        y: sorted.map(([, d]) => d.model_b_rate),
+        type: 'bar', marker: { color: COLORS.modelB },
+        hovertemplate: '<b>%{x}</b><br>' + s.model_b_name + ': %{y:.1%}<extra></extra>'
+      };
+
+      Plotly.newPlot('chart-comparison', [traceA, traceB], {
+        barmode: 'group',
+        paper_bgcolor: '#0f172a', plot_bgcolor: COLORS.bgCard,
+        font: { family: 'Inter', color: COLORS.textPrimary },
+        xaxis: { tickangle: -45, gridcolor: COLORS.bgSurface },
+        yaxis: { tickformat: '.0%', gridcolor: COLORS.bgSurface },
+        legend: { orientation: 'h', y: 1.12, font: { size: 13 } },
+        margin: { l: 50, r: 20, t: 50, b: 120 }
+      }, { responsive: true });
+    }
+
+    function renderDeltaChart(data) {
+      const s = data.summary;
+      const sorted = Object.entries(data.category_deltas)
+        .sort((a, b) => a[1].delta - b[1].delta);
+      const cats = sorted.map(([c]) => formatCatName(c));
+      const deltas = sorted.map(([, d]) => d.delta);
+      const colors = deltas.map(d => d < 0 ? COLORS.success : COLORS.danger);
+
+      const trace = {
+        y: cats, x: deltas, type: 'bar', orientation: 'h',
+        marker: { color: colors },
+        text: deltas.map(d => (Math.abs(d) * 100).toFixed(1) + '%'),
+        textposition: 'outside',
+        hovertemplate: '<b>%{y}</b><br>Delta: %{x:+.1%}<extra></extra>'
+      };
+
+      Plotly.newPlot('chart-delta', [trace], {
+        paper_bgcolor: '#0f172a', plot_bgcolor: COLORS.bgCard,
+        font: { family: 'Inter', color: COLORS.textPrimary },
+        xaxis: { tickformat: '+.0%', gridcolor: COLORS.bgSurface,
+          title: { text: '← Better: ' + s.model_b_name + '  |  Better: ' + s.model_a_name + ' →', font: { size: 12 } }
+        },
+        shapes: [{ type: 'line', x0: 0, x1: 0, y0: -0.5, y1: cats.length - 0.5, line: { color: COLORS.textSecondary, width: 2 } }],
+        margin: { l: 180, r: 60, t: 20, b: 60 },
+        height: 900
+      }, { responsive: true });
+    }
+
+    // ─── Data Table ──────────────────────────────────────────
+    function renderDataTable(data) {
+      const tbody = document.getElementById('table-body');
+      if (!tbody) return;
+      const sorted = Object.entries(data.category_hallucination_rates)
+        .sort((a, b) => b[1] - a[1]);
+
+      tbody.innerHTML = sorted.map(([cat, hRate], i) => {
+        const acc = data.category_accuracy[cat] || (1 - hRate);
+        const pct = (hRate * 100).toFixed(1);
+        let riskClass = 'low', riskLabel = 'Low';
+        if (HIGH_RISK.has(cat)) { riskClass = 'high'; riskLabel = 'High'; }
+        else if (MED_RISK.has(cat)) { riskClass = 'medium'; riskLabel = 'Medium'; }
+
+        let barClass = 'success';
+        if (hRate >= 0.5) barClass = 'danger';
+        else if (hRate >= 0.3) barClass = 'warning';
+
+        return `<tr>
+          <td style="color:var(--text-muted)">${i + 1}</td>
+          <td><strong>${formatCatName(cat)}</strong></td>
+          <td>${(acc * 100).toFixed(1)}%</td>
+          <td>
+            <div class="rate-bar">
+              <div class="rate-bar-track"><div class="rate-bar-fill ${barClass}" style="width:${pct}%"></div></div>
+              <span class="rate-value" style="color:var(--${barClass})">${pct}%</span>
+            </div>
+          </td>
+          <td><span class="risk-badge ${riskClass}">${riskLabel}</span></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ─── Utilities ───────────────────────────────────────────
+    function formatCatName(key) {
+      return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+        .replace('Indexical Error', 'Idx Err')
+        .replace('Misconceptions Topical', 'Misconceptions (Topical)')
+        .replace('Myths And Fairytales', 'Myths & Fairytales');
+    }
+
+    function switchTab(btn, viewName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('view-charts').style.display = viewName === 'charts' ? 'block' : 'none';
+      document.getElementById('view-table').style.display = viewName === 'table' ? 'block' : 'none';
+    }
+
+    // Auto-select first result if available
+    window.addEventListener('DOMContentLoaded', () => {
+      const sel = document.getElementById('result-select');
+      if (sel.options.length > 1) {
+        sel.selectedIndex = 1;
+        loadResult();
+      }
+    });
+  </script>
+</body>
+</html>
