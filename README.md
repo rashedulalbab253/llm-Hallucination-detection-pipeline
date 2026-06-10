@@ -1,5 +1,7 @@
 # 🧠 Hallucination Detection Pipeline
 
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/rashedulalbab253/llm-Hallucination-detection-pipeline)
+
 A production-grade system for evaluating LLM factual accuracy against the **TruthfulQA** benchmark using **DeepEval**. Identifies which topic categories a model hallucinates on most — and quantifies the gap between models.
 
 ## Why This Matters
@@ -83,13 +85,20 @@ Hallucination-detection-pipeline/
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/rashedulalbab253/llm-Hallucination-detection-pipeline.git
+cd llm-Hallucination-detection-pipeline
+```
+
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Try the Dashboard (No API Key Needed)
+### 3. Try the Dashboard (No API Key Needed)
 
 ```bash
 # Generate realistic sample evaluation data
@@ -101,7 +110,7 @@ python run_dashboard.py
 
 Open **http://localhost:5000** in your browser.
 
-### 3. Run Real Evaluations
+### 4. Run Real Evaluations
 
 ```bash
 # Copy the env template and add your OpenAI key
